@@ -1,108 +1,130 @@
+/**
+ * @file main.cpp
+ * @author Yangyang Zhu (1929772352@qq.com)
+ * @version 0.1
+ * @date 2024-07-31
+ * 
+ * @copyright Copyright (c) 2024
+ * this file is used to test the performance of gemm methods
+ */
+
 #include <iostream>
-#include <vector>
+#include <chrono>
 #include <cstdlib>
-#include <cassert>
+#include <cmath>
 
-#define CHECK_CUDA(call)                                                        \
-    do {                                                                        \
-        cudaError_t err = call;                                                 \
-        if (err != cudaSuccess) {                                               \
-            std::cerr << "CUDA Error: " << cudaGetErrorString(err)              \
-                      << " at " << __FILE__ << ":" << __LINE__ << std::endl;    \
-            std::exit(EXIT_FAILURE);                                            \
-        }                                                                       \
-    } while (0)
+#define MEASURE_TIME(FUNC, DESC, SIZE) \
+    start = std::chrono::high_resolution_clock::now(); \
+    FUNC; \
+    end = std::chrono::high_resolution_clock::now(); \
+    duration = end - start; \
+    gflops = (2.0 * SIZE * SIZE * SIZE) / (duration.count() * 1e9); \
+    std::cout << DESC << " Time: " << duration.count() << " seconds"; \
+    std::cout << ", GFLOPS: " << gflops << std::endl;
 
-// Kernel declaration
-__global__ void gemm_m8n8k16_mma(const int8_t* A, const int8_t* B, int32_t* C, 
-                                 int M, int N, int K);
-
-// CPU reference implementation of GEMM
-void gemm_cpu(const int8_t* A, const int8_t* B, int32_t* C, int M, int N, int K) {
-    for (int i = 0; i < M; ++i) {
-        for (int j = 0; j < N; ++j) {
-            int32_t sum = 0;
-            for (int k = 0; k < K; ++k) {
-                sum += A[i * K + k] * B[k * N + j];
-            }
-            C[i * N + j] = sum;
-        }
+/**
+ * generate matrices 
+ */
+void generate_matrices(float* A, float* B, int size) {
+    for (int i = 0; i < size * size; ++i) {
+        A[i] = static_cast<float>(rand()) / RAND_MAX;
+        B[i] = static_cast<float>(rand()) / RAND_MAX;
+        // A[i] = 1;
+        // B[i] = 1;
     }
 }
 
-// Utility to print a matrix (for debugging)
-template <typename T>
-void print_matrix(const T* matrix, int rows, int cols) {
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            std::cout << static_cast<int>(matrix[i * cols + j]) << " ";
+/**
+ * compare if the results is correct
+ */
+bool compare_results(float* C1, float* C2, int size, float tol = 1e-2) {
+    for (int i = 0; i < size * size; ++i) {
+        if (fabs(C1[i] - C2[i]) > tol) {
+            std::cout << C1[i] << " != " << C2[i] << std::endl;
+            return false;
         }
-        std::cout << std::endl;
     }
+    return true;
 }
 
-// Main test bench
-int main() {
-    // Matrix dimensions (must be multiples of 8 and 16)
-    int M = 16;  // Rows of A and C
-    int N = 16;  // Columns of B and C
-    int K = 16;  // Columns of A, Rows of B
+/////////////////////////// gemm methods //////////////////////////////
+// cpu
+void gemm_cpu_naive(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cpu_out_prod(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cpu_cblas(float* A, float* B, float* C, int M, int N, int K);
+// cuda
+void gemm_cuda_naive(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cuda_reg_tile(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cuda_sm_tile(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cuda_cublas(float* A, float* B, float* C, int M, int N, int K);
+///////////////////////////////////////////////////////////////////////
 
-    // Allocate host memory
-    std::vector<int8_t> h_A(M * K, 0);
-    std::vector<int8_t> h_B(K * N, 0);
-    std::vector<int32_t> h_C(M * N, 0);
-    std::vector<int32_t> h_C_ref(M * N, 0);
+void benchmark_gemm(int size) {
+    float *A = new float[size * size];
+    float *B = new float[size * size];
+    float *C_cpu_naive = new float[size * size];
+    float *C_cpu_out_prod = new float[size * size];
+    float *C_cpu_cblas = new float[size * size];
+    float *C_cuda_naive = new float[size * size];
+    float *C_cuda_reg_tile = new float[size * size];
+    float *C_cuda_sm_tile = new float[size * size];
+    float *C_cuda_cublas = new float[size * size];
 
-    // Initialize input matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = rand() % 4 - 2;  // Random values in range [-2, 2]
-    for (int i = 0; i < K * N; ++i) h_B[i] = rand() % 4 - 2;
+    generate_matrices(A, B, size);
 
-    // Allocate device memory
-    int8_t *d_A, *d_B;
-    int32_t *d_C;
-    CHECK_CUDA(cudaMalloc(&d_A, M * K * sizeof(int8_t)));
-    CHECK_CUDA(cudaMalloc(&d_B, K * N * sizeof(int8_t)));
-    CHECK_CUDA(cudaMalloc(&d_C, M * N * sizeof(int32_t)));
+    auto start = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> duration;
+    float gflops;
 
-    // Copy data to device
-    CHECK_CUDA(cudaMemcpy(d_A, h_A.data(), M * K * sizeof(int8_t), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_B, h_B.data(), K * N * sizeof(int8_t), cudaMemcpyHostToDevice));
+    // MEASURE_TIME(gemm_cpu_naive(A, B, C_cpu_naive, size, size, size), "cpu naive", size);
+    // MEASURE_TIME(gemm_cpu_out_prod(A, B, C_cpu_out_prod, size, size, size), "cpu out prod", size);
+    // MEASURE_TIME(gemm_cpu_cblas(A, B, C_cpu_cblas, size, size, size), "cpu cblas", size);
+    MEASURE_TIME(gemm_cuda_naive(A, B, C_cuda_naive, size, size, size), "cuda naive", size);
+    MEASURE_TIME(gemm_cuda_reg_tile(A, B, C_cuda_reg_tile, size, size, size), "cuda reg tile", size);
+    MEASURE_TIME(gemm_cuda_sm_tile(A, B, C_cuda_sm_tile, size, size, size), "cuda sm tile", size);
+    MEASURE_TIME(gemm_cuda_cublas(A, B, C_cuda_cublas, size, size, size), "cuda cublas", size);
 
-    // Launch kernel
-    dim3 threadsPerBlock(32, 1);  // One warp per block
-    dim3 blocksPerGrid((N + 7) / 8, (M + 7) / 8);
-    gemm_m8n8k16_mma<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, M, N, K);
-    CHECK_CUDA(cudaDeviceSynchronize());
-
-    // Copy results back to host
-    CHECK_CUDA(cudaMemcpy(h_C.data(), d_C, M * N * sizeof(int32_t), cudaMemcpyDeviceToHost));
-
-    // Compute reference result on CPU
-    gemm_cpu(h_A.data(), h_B.data(), h_C_ref.data(), M, N, K);
-
-    // Verify the results
-    bool pass = true;
-    for (int i = 0; i < M * N; ++i) {
-        if (h_C[i] != h_C_ref[i]) {
-            std::cerr << "Mismatch at index " << i << ": GPU result " << h_C[i]
-                      << ", CPU result " << h_C_ref[i] << std::endl;
-            pass = false;
-            break;
-        }
-    }
-
-    if (pass) {
-        std::cout << "Test passed!" << std::endl;
+    // if (compare_results(C_cpu_naive, C_cpu_out_prod, size)) {
+    // if (compare_results(C_cpu_naive, C_cuda_reg_tile, size)) {
+    // if (compare_results(C_cuda_cublas, C_cuda_reg_tile, size)) {
+    if (compare_results(C_cuda_cublas, C_cuda_sm_tile, size)) {
+    // if (compare_results(C_cuda_naive, C_cuda_cublas, size)) {
+        // if (compare_results(C_cpu_naive, C_cuda_cublas, size)) {
+            std::cout << "Results are correct and match." << std::endl;
+        // } else {
+        //     std::cout << "Results are correct but do not match cuBLAS." << std::endl;
+        // }
     } else {
-        std::cerr << "Test failed!" << std::endl;
+        std::cout << "Results do not match!" << std::endl;
     }
 
-    // Free device memory
-    CHECK_CUDA(cudaFree(d_A));
-    CHECK_CUDA(cudaFree(d_B));
-    CHECK_CUDA(cudaFree(d_C));
+    delete[] A;
+    delete[] B;
+    delete[] C_cpu_naive;
+    delete[] C_cpu_out_prod;
+    delete[] C_cpu_cblas;
+    delete[] C_cuda_naive;
+    delete[] C_cuda_reg_tile;
+    delete[] C_cuda_sm_tile;
+    delete[] C_cuda_cublas;
+}
 
+int main() {
+    // int size = 4;
+    // int size = 8;
+    // int size = 32;  // Example size, you can vary this
+    // int size = 64;
+    // int size = 128;
+    // int size = 256;
+    // int size = 1024;
+    // int size = 2048;
+    // int size = 4096;
+    // int size = 8192;
+    // int size = 8192 * 2;
+    for (int size = 128; size <= 8192 * 2; size *= 2) {
+        std::cout << "Size: " << size << std::endl;
+        benchmark_gemm(size);
+    }
     return 0;
 }
-
