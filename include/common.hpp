@@ -1,6 +1,6 @@
 #include <cublas_v2.h>
 #include <string>
-
+#include <iostream>
 
 #define CUDA_CHECK(call)                                                    \
 {                                                                           \

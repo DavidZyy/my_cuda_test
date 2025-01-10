@@ -1,14 +1,14 @@
 NAME  = test_cuda_gemm
-SRC_DIR  =
+SRC_DIR  = gemm
 
-SRC_FILE = Sgemm.cu
+SRC_FILE = $(shell find $(SRC_DIR) -type f)
 
 BUILD = build/
 OBJ = $(BUILD)$(SRC_DIR)$(NAME)
 
 CXX = nvcc
 
-CXXFLAGS = -lcublas -ccbin g++ -std=c++17
+CXXFLAGS = -lcublas -ccbin g++ -std=c++17 -I./include
 
 
 run:
