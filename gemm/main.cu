@@ -122,14 +122,14 @@ float testPerformance(int repeat, size_t M, size_t N, size_t K) {
 
 typedef float (*TestMaxErrorFunc)(int, int, int);
 TestMaxErrorFunc testMaxErrorFuncs[] = {
-    testMaxError<float, cublas_sgemm<float>>,
-    testMaxError<float, simt_v0<float>>,
+    // testMaxError<float, cublas_sgemm<float>>,
+    // testMaxError<float, simt_v0<float>>,
     testMaxError<float, simt_v1<float>>
 };
 
 void testAllMaxError() {
     int M = 512, N = 512, K = 512;
-    for (int j = 0; j < 3; j++) {
+    for (int j = 0; j < sizeof(testMaxErrorFuncs) / sizeof(TestMaxErrorFunc); j++) {
         float max_error = testMaxErrorFuncs[j](M, N, K);
         printf("M N K = %6d %6d %6d, Max Error = %10.8lf\n", M, N, K, max_error);
     }
@@ -140,8 +140,8 @@ typedef float (*TestFunc)(int, size_t, size_t, size_t);
 
 // Array of function pointers
 TestFunc testFuncs[] = {
-    testPerformance<float, cublas_sgemm<float>>,
-    testPerformance<float, simt_v0<float>>,
+    // testPerformance<float, cublas_sgemm<float>>,
+    // testPerformance<float, simt_v0<float>>,
     testPerformance<float, simt_v1<float>>
 };
 
@@ -153,7 +153,7 @@ void testAllPerformance() {
     // const int K_list[TESTNUM] = {128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384};
     const int K_list[TESTNUM] = {1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024};
 
-    for (int j = 0; j < 3; j++) {
+    for (int j = 0; j < sizeof(testFuncs) / sizeof(TestFunc); j++) {
         printf("Test %d\n", j);
         for (int i = 0; i < TESTNUM; i++) {
             int M = M_list[i];
