@@ -1,5 +1,5 @@
 /**
- * @file gemm.cu
+ * @file sgemm.cu
  * @author Yangyang Zhu (1929772352@qq.com)
  * @version 0.1
  * @date 2024-07-31
@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2024
  * gpu accelerate gemm
  * reference: https://dlsyscourse.org/slides/12-gpu-acceleration.pdf
+ * use cuda core do single gemm ??
  */
 
 #include <cassert>
@@ -41,12 +42,18 @@
     }                                                                       \
 }
 
-__global__ void gemm_kernel_naive(float* A, float* B, float* C, int M, int N, int K) {
+/************************************************************************************************************ */
+
+/**
+ * v0 methods, naive methods
+ */
+__global__ void gemm_kernel_v0(float* A, float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (row < M && col < N) {
         float value = 0.0f;
+        #pragma unroll
         for (int e = 0; e < K; ++e) {
             value += A[row * K + e] * B[e * N + col];
         }
@@ -54,7 +61,7 @@ __global__ void gemm_kernel_naive(float* A, float* B, float* C, int M, int N, in
     }
 }
 
-void gemm_cuda_naive(float* A, float* B, float* C, int M, int N, int K) {
+void gemm_v0(float* A, float* B, float* C, int M, int N, int K) {
     float *d_A, *d_B, *d_C;
     size_t size_A = M * K * sizeof(float);
     size_t size_B = K * N * sizeof(float);
@@ -70,7 +77,7 @@ void gemm_cuda_naive(float* A, float* B, float* C, int M, int N, int K) {
     dim3 dimBlock(TILE_SIZE, TILE_SIZE);
     dim3 dimGrid((N + TILE_SIZE - 1) / TILE_SIZE, (M + TILE_SIZE - 1) / TILE_SIZE);
     
-    gemm_kernel_naive<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
+    gemm_kernel_v0<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(C, d_C, size_C, cudaMemcpyDeviceToHost));
@@ -80,7 +87,9 @@ void gemm_cuda_naive(float* A, float* B, float* C, int M, int N, int K) {
     CUDA_CHECK(cudaFree(d_C));
 }
 
-void gemm_cuda_cublas(float* A, float* B, float* C, int M, int N, int K) {
+/************************************************************************************************************ */
+
+void gemm_cublas(float* A, float* B, float* C, int M, int N, int K) {
     cublasHandle_t handle;
     CUBLAS_CHECK(cublasCreate(&handle));
 
@@ -108,8 +117,8 @@ void gemm_cuda_cublas(float* A, float* B, float* C, int M, int N, int K) {
     CUDA_CHECK(cudaFree(d_C));
     CUBLAS_CHECK(cublasDestroy(handle));
 }
-
-/************************************** reg tile *********************************************/
+ 
+/************************************************************************************************************ */
 // #define reg_tile_size 1
 // #define reg_tile_size 2
 #define reg_tile_size 4
@@ -125,7 +134,11 @@ void gemm_cuda_cublas(float* A, float* B, float* C, int M, int N, int K) {
 // 
 // }
 
-__global__ void gemm_kernel_reg_tile(float* A, float* B, float* C, int M, int N, int K) {
+/**
+ * reg tile
+ * see https://en.wikipedia.org/wiki/Block_matrix#Multiplication
+ */
+__global__ void gemm_kernel_v1(float* A, float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     
@@ -133,6 +146,9 @@ __global__ void gemm_kernel_reg_tile(float* A, float* B, float* C, int M, int N,
     float b[reg_tile_size];
     float c[reg_tile_size][reg_tile_size] = {0};
 
+    // supplementary comment: the important point is partioned matrix multiplication, not outer / inner product
+    // because A is be partioned to col vector, and B is partiond to row vector,
+    // so it seems like doing out product
     // use out prod to compute gemm
     for (int k = 0; k < K; ++k) {
 
@@ -167,7 +183,7 @@ __global__ void gemm_kernel_reg_tile(float* A, float* B, float* C, int M, int N,
 /**
  * partition matrix by threads
  */
-void gemm_cuda_reg_tile(float* A, float* B, float* C, int M, int N, int K) {
+void gemm_v1(float* A, float* B, float* C, int M, int N, int K) {
     float *d_A, *d_B, *d_C;
     size_t size_A = M * K * sizeof(float);
     size_t size_B = K * N * sizeof(float);
@@ -183,7 +199,7 @@ void gemm_cuda_reg_tile(float* A, float* B, float* C, int M, int N, int K) {
     dim3 dimBlock(TILE_SIZE, TILE_SIZE);
     dim3 dimGrid((N + TILE_SIZE - 1) / TILE_SIZE / reg_tile_size, (M + TILE_SIZE - 1) / TILE_SIZE / reg_tile_size);
     
-    gemm_kernel_reg_tile<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
+    gemm_kernel_v1<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(C, d_C, size_C, cudaMemcpyDeviceToHost));
@@ -193,7 +209,13 @@ void gemm_cuda_reg_tile(float* A, float* B, float* C, int M, int N, int K) {
     CUDA_CHECK(cudaFree(d_C));
 }
 
-__global__ void gemm_kernel_sm_tile(float* A, float* B, float* C, int M, int N, int K) {
+
+/************************************************************************************************************ */
+
+/**
+ * shared memroy + reg tile
+ */
+__global__ void gemm_kernel_v2(float* A, float* B, float* C, int M, int N, int K) {
     // int yblock = blockIdx.y;
     // int xblock = blockIdx.x;
 
@@ -266,7 +288,7 @@ __global__ void gemm_kernel_sm_tile(float* A, float* B, float* C, int M, int N, 
  * shared memory tile
  * partition matrix by blocks, and then partition the submatrix by threads
  */
-void gemm_cuda_sm_tile(float* A, float* B, float* C, int M, int N, int K) {
+void gemm_v2(float* A, float* B, float* C, int M, int N, int K) {
     float *d_A, *d_B, *d_C;
     size_t size_A = M * K * sizeof(float);
     size_t size_B = K * N * sizeof(float);
@@ -284,7 +306,7 @@ void gemm_cuda_sm_tile(float* A, float* B, float* C, int M, int N, int K) {
     // dim3 dimBlock(2, 2);
     // dim3 dimGrid(2, 2);
     
-    gemm_kernel_sm_tile<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
+    gemm_kernel_v2<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(C, d_C, size_C, cudaMemcpyDeviceToHost));

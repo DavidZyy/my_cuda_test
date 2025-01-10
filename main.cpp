@@ -48,15 +48,10 @@ bool compare_results(float* C1, float* C2, int size, float tol = 1e-2) {
 }
 
 /////////////////////////// gemm methods //////////////////////////////
-// cpu
-void gemm_cpu_naive(float* A, float* B, float* C, int M, int N, int K);
-void gemm_cpu_out_prod(float* A, float* B, float* C, int M, int N, int K);
-void gemm_cpu_cblas(float* A, float* B, float* C, int M, int N, int K);
-// cuda
-void gemm_cuda_naive(float* A, float* B, float* C, int M, int N, int K);
-void gemm_cuda_reg_tile(float* A, float* B, float* C, int M, int N, int K);
-void gemm_cuda_sm_tile(float* A, float* B, float* C, int M, int N, int K);
-void gemm_cuda_cublas(float* A, float* B, float* C, int M, int N, int K);
+void gemm_v0(float* A, float* B, float* C, int M, int N, int K);
+void gemm_v1(float* A, float* B, float* C, int M, int N, int K);
+void gemm_v2(float* A, float* B, float* C, int M, int N, int K);
+void gemm_cublas(float* A, float* B, float* C, int M, int N, int K);
 ///////////////////////////////////////////////////////////////////////
 
 void benchmark_gemm(int size) {
@@ -80,10 +75,10 @@ void benchmark_gemm(int size) {
     // MEASURE_TIME(gemm_cpu_naive(A, B, C_cpu_naive, size, size, size), "cpu naive", size);
     // MEASURE_TIME(gemm_cpu_out_prod(A, B, C_cpu_out_prod, size, size, size), "cpu out prod", size);
     // MEASURE_TIME(gemm_cpu_cblas(A, B, C_cpu_cblas, size, size, size), "cpu cblas", size);
-    MEASURE_TIME(gemm_cuda_naive(A, B, C_cuda_naive, size, size, size), "cuda naive", size);
-    MEASURE_TIME(gemm_cuda_reg_tile(A, B, C_cuda_reg_tile, size, size, size), "cuda reg tile", size);
-    MEASURE_TIME(gemm_cuda_sm_tile(A, B, C_cuda_sm_tile, size, size, size), "cuda sm tile", size);
-    MEASURE_TIME(gemm_cuda_cublas(A, B, C_cuda_cublas, size, size, size), "cuda cublas", size);
+    MEASURE_TIME(gemm_v0(A, B, C_cuda_naive, size, size, size), "cuda naive", size);
+    MEASURE_TIME(gemm_v1(A, B, C_cuda_reg_tile, size, size, size), "cuda reg tile", size);
+    MEASURE_TIME(gemm_v2(A, B, C_cuda_sm_tile, size, size, size), "cuda sm tile", size);
+    MEASURE_TIME(gemm_cublas(A, B, C_cuda_cublas, size, size, size), "cuda cublas", size);
 
     // if (compare_results(C_cpu_naive, C_cpu_out_prod, size)) {
     // if (compare_results(C_cpu_naive, C_cuda_reg_tile, size)) {
