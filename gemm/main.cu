@@ -8,6 +8,7 @@
 
 template<typename dtype> void simt_v0(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, size_t N, size_t K);
 template<typename dtype> void simt_v1(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, size_t N, size_t K);
+template<typename dtype> void simt_v2(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, size_t N, size_t K);
 
 /***********************************************************************************************************************************************************/
 template <typename dtype>
@@ -42,40 +43,40 @@ void cublas_sgemm(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, s
  */
 template <typename dtype, void (*func)(const dtype*, const dtype*, dtype*, size_t, size_t, size_t)>
 float testMaxError(int M, int N, int K) {
-    size_t size_a = M * K * sizeof(float);
-    size_t size_b = K * N * sizeof(float);
-    size_t size_c = M * N * sizeof(float);
+    size_t size_a = M * K * sizeof(dtype);
+    size_t size_b = K * N * sizeof(dtype);
+    size_t size_c = M * N * sizeof(dtype);
 
-    float *h_a, *h_b, *h_c, *d_a, *d_b, *d_c, *h_d_c;
-    h_a = (float *)malloc(size_a);
-    h_b = (float *)malloc(size_b);
-    h_c = (float *)malloc(size_c);
+    dtype *h_a, *h_b, *h_c, *d_a, *d_b, *d_c, *h_d_c;
+    h_a = (dtype *)malloc(size_a);
+    h_b = (dtype *)malloc(size_b);
+    h_c = (dtype *)malloc(size_c);
     CUDA_CHECK(cudaMalloc(&d_a, size_a));
     CUDA_CHECK(cudaMalloc(&d_b, size_b));
     CUDA_CHECK(cudaMalloc(&d_c, size_c));
-    h_d_c = (float *)malloc(size_c);
+    h_d_c = (dtype *)malloc(size_c);
 
     srand(time(0));
     for (int i = 0; i < M * K; i++)
-        h_a[i] = rand() / float(RAND_MAX);
+        h_a[i] = dtype(rand() / float(RAND_MAX));
     for (int i = 0; i < K * N; i++)
-        h_b[i] = rand() / float(RAND_MAX);
+        h_b[i] = dtype(rand() / float(RAND_MAX));
 
     cudaMemcpy(d_a, h_a, size_a, cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, h_b, size_b, cudaMemcpyHostToDevice);
 
-    cpu_sgemm<float>(h_a, h_b, h_c, M, N, K);
+    cpu_sgemm<dtype>(h_a, h_b, h_c, M, N, K);
     func(d_a, d_b, d_c, M, N, K);
 
     CUDA_CHECK(cudaMemcpy(h_d_c, d_c, size_c, cudaMemcpyDeviceToHost));
 
     float max_error = 0;
     for (int i = 0; i < M * N; i++) {
-        float this_error = std::abs(h_d_c[i] - h_c[i]);
+        float this_error = std::abs(float(h_d_c[i]) - float(h_c[i]));
         if (max_error != max_error || this_error != this_error) // nan
             max_error = -NAN;
         else
-            max_error = std::max(max_error, this_error);
+            max_error = std::max(float(max_error), float(this_error));
     }
 
     free(h_a);
@@ -91,11 +92,11 @@ float testMaxError(int M, int N, int K) {
 
 template <typename dtype, void (*func)(const dtype*, const dtype*, dtype*, size_t, size_t, size_t)>
 float testPerformance(int repeat, size_t M, size_t N, size_t K) {
-    size_t size_a = M * K * sizeof(float);
-    size_t size_b = K * N * sizeof(float);
-    size_t size_c = M * N * sizeof(float);
+    size_t size_a = M * K * sizeof(dtype);
+    size_t size_b = K * N * sizeof(dtype);
+    size_t size_c = M * N * sizeof(dtype);
 
-    float *d_a, *d_b, *d_c;
+    dtype *d_a, *d_b, *d_c;
     CUDA_CHECK(cudaMalloc(&d_a, size_a));
     CUDA_CHECK(cudaMalloc(&d_b, size_b));
     CUDA_CHECK(cudaMalloc(&d_c, size_c));
@@ -123,8 +124,11 @@ float testPerformance(int repeat, size_t M, size_t N, size_t K) {
 typedef float (*TestMaxErrorFunc)(int, int, int);
 TestMaxErrorFunc testMaxErrorFuncs[] = {
     // testMaxError<float, cublas_sgemm<float>>,
+    // testMaxError<half, simt_v0<half>>,
     // testMaxError<float, simt_v0<float>>,
-    testMaxError<float, simt_v1<float>>
+    // testMaxError<float, simt_v1<float>>
+    // testMaxError<half, simt_v1<half>>
+    testMaxError<float, simt_v2<float>>
 };
 
 void testAllMaxError() {
@@ -141,8 +145,13 @@ typedef float (*TestFunc)(int, size_t, size_t, size_t);
 // Array of function pointers
 TestFunc testFuncs[] = {
     // testPerformance<float, cublas_sgemm<float>>,
+    // testPerformance<half, cublas_sgemm<half>>,
     // testPerformance<float, simt_v0<float>>,
-    testPerformance<float, simt_v1<float>>
+    // testPerformance<float, simt_v1<float>>
+    // testPerformance<float, simt_v0<float>>,
+    // testPerformance<half, simt_v0<half>>,
+    // testPerformance<half, simt_v1<half>>
+    testPerformance<float, simt_v2<float>>,
 };
 
 
@@ -155,7 +164,7 @@ void testAllPerformance() {
 
     for (int j = 0; j < sizeof(testFuncs) / sizeof(TestFunc); j++) {
         printf("Test %d\n", j);
-        for (int i = 0; i < TESTNUM; i++) {
+        for (int i = 0; i < TESTNUM-5; i++) {
             int M = M_list[i];
             int N = N_list[i];
             int K = K_list[i];
@@ -166,8 +175,80 @@ void testAllPerformance() {
     }
 }
 
+void debugKernel() {
+    int M = 16, N = 16, K = 16;
+    size_t size_a = M * K * sizeof(int);
+    size_t size_b = K * N * sizeof(int);
+    size_t size_c = M * N * sizeof(int);
+
+    int *h_a, *h_b, *h_c, *d_a, *d_b, *d_c, *h_d_c;
+    h_a = (int *)malloc(size_a);
+    h_b = (int *)malloc(size_b);
+    h_c = (int *)malloc(size_c);
+    CUDA_CHECK(cudaMalloc(&d_a, size_a));
+    CUDA_CHECK(cudaMalloc(&d_b, size_b));
+    CUDA_CHECK(cudaMalloc(&d_c, size_c));
+    h_d_c = (int *)malloc(size_c);
+
+    int id = 0;
+    for (int i = 0; i < M * K; i++)
+        h_a[i] = id++;
+    id = 0;
+    for (int i = 0; i < K * N; i++)
+        h_b[i] = id++;
+
+    cudaMemcpy(d_a, h_a, size_a, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, size_b, cudaMemcpyHostToDevice);
+
+    cpu_sgemm<int>(h_a, h_b, h_c, M, N, K);
+    // func(d_a, d_b, d_c, M, N, K);
+    simt_v2<int>(d_a, d_b, d_c, M, N, K);
+
+    CUDA_CHECK(cudaMemcpy(h_d_c, d_c, size_c, cudaMemcpyDeviceToHost));
+
+    // print matrix a and b
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < K; j++) {
+            printf("%10d ", h_a[i * K + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+    for (int i = 0; i < K; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%10d ", h_b[i * N + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+    // put matrix h_c and h_d_c
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%10d ", h_c[i * N + j]);
+        }
+        printf("\n");
+    }
+    printf("\n");
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%10d ", h_d_c[i * N + j]);
+        }
+        printf("\n");
+    }
+
+
+    free(h_a);
+    free(h_b);
+    free(h_c);
+    CUDA_CHECK(cudaFree(d_a));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_c));
+    free(h_d_c);
+}
+
 int main() {
     testAllMaxError();
     testAllPerformance();
+    // debugKernel();
     return 0;
 }

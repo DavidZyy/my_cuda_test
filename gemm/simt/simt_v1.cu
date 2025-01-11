@@ -1,3 +1,4 @@
+// see [asserts/Screenshot from 2025-01-10 20-33-15.png]()
 #include "common.hpp"
 #include <cassert>
 
@@ -15,8 +16,8 @@ __global__ void simt_v1_kernel(const dtype* lhs, const dtype* rhs, dtype* result
     size_t row = blockIdx.x * blockDim.x + threadIdx.x;  // Row index
     size_t col = blockIdx.y * blockDim.y + threadIdx.y;  // Column index
 
-    float a[TM], b[TN];
-    float c[TM][TN] = {0};
+    dtype a[TM], b[TN];
+    dtype c[TM][TN] = {0};
 
     for (int k = 0; k < K; k++) {
 
@@ -52,8 +53,8 @@ __global__ void simt_v1_kernel2(const dtype* lhs, const dtype* rhs, dtype* resul
     size_t row = blockIdx.x * blockDim.x + threadIdx.x;  // Row index
     size_t col = blockIdx.y * blockDim.y + threadIdx.y;  // Column index
 
-    float a[TM][TK], b[TK][TN];
-    float c[TM][TN] = {0};
+    dtype a[TM][TK], b[TK][TN];
+    dtype c[TM][TN] = {0};
 
     for (int k = 0; k < K; k += TK) {
 
@@ -109,3 +110,4 @@ void simt_v1(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, size_t
 
 
 template void simt_v1<float>(const float* lhs, const float* rhs, float* result, size_t M, size_t N, size_t K);
+template void simt_v1<half>(const half* lhs, const half* rhs, half* result, size_t M, size_t N, size_t K);

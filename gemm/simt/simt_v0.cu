@@ -34,3 +34,4 @@ void simt_v0(const dtype* lhs, const dtype* rhs, dtype* result, size_t M, size_t
 
 // instantiate the templates
 template void simt_v0<float>(const float* lhs, const float* rhs, float* result, size_t M, size_t N, size_t K);
+template void simt_v0<half>(const half* lhs, const half* rhs, half* result, size_t M, size_t N, size_t K);
